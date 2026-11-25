@@ -3120,5 +3120,682 @@ if(PK)window.PeakCard=function(host,o){
  return c;};
 })();
 </script>
+<!-- ═══ WJ PACK 5 · Cloud sync · Firestore + Google sign-in · paste above </body>, after Pack 4 ═══ -->
+<style>
+#mCloud .modal{max-width:620px}
+.cs-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--bdr);font-size:12.5px}
+.cs-row:last-child{border-bottom:0}
+.cs-row .l{min-width:0}
+.cs-row .l b{display:block;font-size:12.5px}
+.cs-row .l span{display:block;font-size:11.5px;color:var(--txm);line-height:1.5;margin-top:2px}
+.cs-uid{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;background:var(--bg2,#f1f5f9);padding:3px 7px;border-radius:5px;word-break:break-all;display:inline-block;margin-top:4px;user-select:all}
+.cs-box{margin-top:12px;padding:10px 12px;border-radius:7px;font-size:12px;line-height:1.65}
+.cs-ok{background:var(--ok-bg,#ecfdf5);color:#065f46}
+.cs-err{background:var(--err-bg,#fef2f2);color:#991b1b}
+.cs-warn{background:var(--warn-bg,#fffbeb);color:#78350f}
+.cs-info{background:#e0f2fe;color:#0c4a6e}
+.cs-t{display:flex;gap:8px;padding:7px 0;font-size:12.5px;align-items:flex-start;border-bottom:1px solid var(--bdr)}
+.cs-t:last-child{border-bottom:0}
+.cs-t .ic{flex:0 0 18px;text-align:center}
+.cs-t .tx{min-width:0}
+.cs-t .tx b{display:block}
+.cs-t .tx span{display:block;font-size:11.5px;color:var(--txm);line-height:1.55;margin-top:2px}
+.cs-fix{margin-top:5px;padding:7px 9px;border-radius:5px;background:var(--err-bg,#fef2f2);color:#991b1b;font-size:11.5px;line-height:1.6}
+.cs-rules{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;line-height:1.55;background:#0f172a;color:#e2e8f0;padding:10px 11px;border-radius:6px;margin-top:7px;overflow-x:auto;white-space:pre;user-select:all}
+</style>
+
+<div class="mo" id="mCloud"><div class="modal">
+  <div class="mh">
+    <div><div class="mh-title">☁️ Cloud sync</div><div class="mh-sub">Your records, kept on your own private Firebase account.</div></div>
+    <button class="mcl" onclick="cm('mCloud')" aria-label="Close">×</button>
+  </div>
+  <div class="mb" id="csBody"></div>
+  <div class="mf" style="flex-wrap:wrap;gap:7px">
+    <button class="btn btn-gh" onclick="cm('mCloud')">Close</button>
+    <button class="btn btn-ol" id="csTestBtn" onclick="WJCloud.test()">🔍 Test connection</button>
+    <button class="btn btn-a" id="csAuthBtn" onclick="WJCloud.toggleAuth()">Sign in with Google</button>
+  </div>
+</div></div>
+
+<script type="module">
+import { initializeApp }
+  from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
+         getRedirectResult, onAuthStateChanged, signOut,
+         setPersistence, browserLocalPersistence }
+  from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot }
+  from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
+
+'use strict';
+
+/* ───────────────────────── config ───────────────────────── */
+/* These six values are public by design — they ship inside the page of every
+   Firebase web app. Your data is protected by Google sign-in plus the
+   Firestore rules, never by hiding these. */
+const DEFAULT_CFG = {
+  apiKey:            "AIzaSyDXSk96qL9tim8DP92b9R5ox3R_TFK2mVw",
+  authDomain:        "workjournal-pro-95f26.firebaseapp.com",
+  projectId:         "workjournal-pro-95f26",
+  storageBucket:     "workjournal-pro-95f26.firebasestorage.app",
+  messagingSenderId: "182486759184",
+  appId:             "1:182486759184:web:43cc30795fde0fc522d795"
+};
+
+const DEFAULT_HOST   = 'anandhashok642-coder.github.io/Workjournal/';
+const CFG_OVERRIDE_K = 'wjp_blue_fbcfg';   // optional per-device override
+const SYNCSTATE_K    = 'wjp_cloud_sync';   // {part:{rev,hash}}
+const DEVICE_K       = 'wjp_cloud_device';
+const LASTSYNC_K     = 'wjp_cloud_lastsync';
+const DOC_LIMIT      = 900000;             // Firestore hard limit is 1 MiB
+
+/* The four pieces of your data that travel. Everything else — the Abay API
+   key, this device's Firebase config, lite mode, self-test scratch — stays
+   on the device and is never written to the cloud. */
+const PARTS = {
+  data:    { lsKey:'wjp_blue_v1',      kind:'db',  label:'Work records' },
+  matters: { lsKey:'wjp_blue_matters', kind:'arr', label:'Files & cases' },
+  courts:  { lsKey:'wjp_blue_courts',  kind:'arr', label:'Courts' },
+  rules:   { lsKey:'wjp_blue_rules',   kind:'obj', label:'Holidays & special days' }
+};
+const DB_ARRAYS = ['work','tasks','files','dispatch','copyReturn','otWork','leave','travel'];
+const NEVER_SYNC = ['wjp_blue_abay','wjp_blue_fbcfg','wjp_blue_fbkey','wjp_blue_lite',
+                    'wjp_blue_hrsfix','wjp_blue_intro','wjp_blue_timer',
+                    'wjp_selftest_snap','wjp_selftest_result','wjp_cloud_sync',
+                    'wjp_cloud_device','wjp_cloud_lastsync'];
+
+/* ───────────────────────── small helpers ───────────────────────── */
+const log = (...a) => { try{ console.log('[WJCloud]', ...a); }catch(e){} };
+
+function lsGet(k, d){ try{ const r=localStorage.getItem(k); return r==null?d:JSON.parse(r); }catch(e){ return d; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch(e){ return false; } }
+
+function hash(s){
+  let h1=0x811c9dc5, h2=0x01000193;
+  for(let i=0;i<s.length;i++){ const c=s.charCodeAt(i);
+    h1=(h1^c)*16777619>>>0; h2=(h2+c*31+i)>>>0; }
+  return (h1>>>0).toString(36)+'-'+(h2>>>0).toString(36)+'-'+s.length.toString(36);
+}
+function stable(v){
+  if(v===null||typeof v!=='object') return JSON.stringify(v)??'null';
+  if(Array.isArray(v)) return '['+v.map(stable).join(',')+']';
+  return '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}';
+}
+function deviceId(){
+  let d=lsGet(DEVICE_K,null);
+  if(!d){ d=Math.random().toString(36).slice(2,10); lsSet(DEVICE_K,d); }
+  return d;
+}
+/* The app's own self-tests write DEMO records, then put the real data back
+   and reload. While one is running there is a safety snapshot in storage.
+   Sync must stand completely still during that window: pushing demo records
+   would plant them in the cloud, and because the merge never deletes, they
+   would come straight back after the test restored the device. */
+/* Opened by double-clicking the .html file, so there is no web address at
+   all. Google sign-in cannot work here and never will: there is no origin to
+   put on Firebase's allowed list. This is a different problem from a real
+   address that simply has not been added yet, and it needs to say so. */
+function runningFromFile(){
+  try{ return location.protocol==='file:' || !location.hostname; }catch(e){ return false; }
+}
+function selfTestRunning(){
+  try{ if(localStorage.getItem('wjp_selftest_snap')!=null) return true; }catch(e){}
+  try{ if(sessionStorage.getItem('wjp_selftest_snap')!=null) return true; }catch(e){}
+  return false;
+}
+function syncState(){ const s=lsGet(SYNCSTATE_K,{}); return (s&&typeof s==='object')?s:{}; }
+function setSyncState(part, rev, h){
+  const s=syncState(); s[part]={rev:rev,hash:h}; lsSet(SYNCSTATE_K,s);
+}
+function emptyFor(kind){ return kind==='arr'?[]:kind==='db'?{}:{}; }
+
+/* ───────────────────────── merge ─────────────────────────
+   Union by record id. A record that exists on either side is kept — this
+   merge can never reduce a count, so sync cannot lose a record. Records with
+   no id are keyed by their content, so they de-duplicate instead of piling
+   up. When the same id holds different content on the two sides, the newer
+   revision wins and the difference is counted so it can be shown.
+   Deletions deliberately do NOT travel: see replaceCloud() for pruning. */
+function keyOf(r){
+  if(r && r.id!=null && r.id!=='') return 'i:'+String(r.id);
+  return 'h:'+hash(stable(r));
+}
+function mergeById(localArr, cloudArr, cloudNewer){
+  const m=new Map(); let gained=0, differed=0;
+  (Array.isArray(localArr)?localArr:[]).forEach(r=>{ if(r&&typeof r==='object') m.set(keyOf(r), r); });
+  (Array.isArray(cloudArr)?cloudArr:[]).forEach(r=>{
+    if(!r||typeof r!=='object') return;
+    const k=keyOf(r);
+    if(!m.has(k)){ m.set(k,r); gained++; return; }
+    if(stable(m.get(k))!==stable(r)){ differed++; if(cloudNewer) m.set(k,r); }
+  });
+  return { list:[...m.values()], gained, differed };
+}
+function mergePart(kind, local, cloud, cloudNewer){
+  let gained=0, differed=0;
+  if(kind==='arr'){
+    const r=mergeById(local,cloud,cloudNewer);
+    return { value:r.list, gained:r.gained, differed:r.differed };
+  }
+  if(kind==='db'){
+    const base=(local&&typeof local==='object')?local:{};
+    const rem =(cloud&&typeof cloud==='object')?cloud:{};
+    const out={...base};
+    DB_ARRAYS.forEach(k=>{
+      const r=mergeById(base[k],rem[k],cloudNewer);
+      out[k]=r.list; gained+=r.gained; differed+=r.differed;
+    });
+    // cfg is settings, not records: newer side wins field by field
+    const lc=(base.cfg&&typeof base.cfg==='object')?base.cfg:{};
+    const rc=(rem.cfg &&typeof rem.cfg ==='object')?rem.cfg :{};
+    out.cfg = cloudNewer ? {...lc,...rc} : {...rc,...lc};
+    if(stable(out.cfg)!==stable(lc)) differed++;
+    // carry any other cloud-only top-level keys
+    Object.keys(rem).forEach(k=>{ if(!(k in out)) out[k]=rem[k]; });
+    return { value:out, gained, differed };
+  }
+  // plain object (rules): merge arrays inside, newer side wins scalars
+  const lo=(local&&typeof local==='object')?local:{};
+  const ro=(cloud&&typeof cloud==='object')?cloud:{};
+  const out={...lo};
+  Object.keys(ro).forEach(k=>{
+    if(Array.isArray(ro[k])||Array.isArray(lo[k])){
+      const r=mergeById(lo[k],ro[k],cloudNewer);
+      out[k]=r.list; gained+=r.gained; differed+=r.differed;
+    } else if(!(k in lo)){ out[k]=ro[k]; gained++; }
+    else if(stable(lo[k])!==stable(ro[k])){ differed++; if(cloudNewer) out[k]=ro[k]; }
+  });
+  return { value:out, gained, differed };
+}
+
+/* ───────────────────────── state ───────────────────────── */
+let app=null, auth=null, fs=null, user=null;
+let unsubs={}, pushTimer=null, dirty=new Set(), applying=false;
+let ready=false, lastErr=null, started=false;
+let counters={pulled:0,pushed:0,differed:0};
+
+function cfg(){
+  const o=lsGet(CFG_OVERRIDE_K,null);
+  if(o&&typeof o==='object'&&o.apiKey&&o.projectId) return o;
+  return DEFAULT_CFG;
+}
+function partRef(part){ return doc(fs,'users',user.uid,'state',part); }
+function status(s){ try{ if(typeof window.setSyncStatus==='function') window.setSyncStatus(s); }catch(e){} }
+function toast(m,t,d){ try{ if(typeof window.toast==='function') window.toast(m,t,d); }catch(e){} }
+
+/* Plain-language meaning for every failure that can realistically land here. */
+function explain(e){
+  const code=String((e&&(e.code||e.message))||'').toLowerCase();
+  const has=s=>code.indexOf(s)>=0;
+  if(has('auth/operation-not-allowed'))
+    return {t:'Google sign-in is switched off in Firebase',
+            f:'Firebase console → Authentication → Sign-in method → Google → Enable → Save.'};
+  if(has('auth/unauthorized-domain')){
+    if(runningFromFile())
+      return {t:'This copy is running as a file on your computer, not on a web address',
+              f:'Google sign-in cannot work from a file. Upload index.html to GitHub, then open your live address and sign in there. Everything you have saved in this file copy stays in it.'};
+    return {t:'This web address is not on the allowed list',
+            f:'Firebase console → Authentication → Settings → Authorized domains → Add domain → '+location.hostname};
+  }
+  if(has('auth/popup-blocked')||has('auth/operation-not-supported'))
+    return {t:'Your browser blocked the sign-in window',
+            f:'Allow pop-ups for this site, then try again. The app will also try a full-page sign-in on its own.'};
+  if(has('auth/popup-closed-by-user')||has('auth/cancelled-popup'))
+    return {t:'The sign-in window closed before finishing', f:'Press Sign in with Google again and complete the Google screen.'};
+  if(has('auth/network-request-failed')||has('unavailable'))
+    return {t:'Could not reach Google', f:'Check your internet connection and try again. Your data on this device is untouched.'};
+  if(has('auth/internal-error'))
+    return {t:'Firebase rejected the request',
+            f:'Usually the Google sign-in provider is half-configured. Open Authentication → Sign-in method → Google and make sure a support email is selected, then Save.'};
+  if(has('permission-denied')||has('permission_denied'))
+    return {t:'The database rules refused this',
+            f:'Paste the rules shown below into Firebase console → Firestore Database → Rules → Publish.'};
+  if(has('unauthenticated'))
+    return {t:'Not signed in', f:'Sign in with Google first.'};
+  if(has('not-found')||has('failed-precondition'))
+    return {t:'No Firestore database found in this project',
+            f:'Firebase console → Firestore Database → Create database → production mode → region asia-south1 (Mumbai).'};
+  if(has('resource-exhausted'))
+    return {t:'The free quota for today is used up', f:'Sync resumes tomorrow. Your data on this device keeps working normally.'};
+  if(has('too-large')||has('invalid-argument'))
+    return {t:'One record set is too large for a single cloud document',
+            f:'Use 💾 Backup to download a file, and report this — it needs the data split across documents.'};
+  return {t:'Unexpected problem: '+String((e&&(e.code||e.message))||e), f:''};
+}
+
+/* ───────────────────────── pull ───────────────────────── */
+function onCloud(part, snap){
+  const meta=PARTS[part];
+  // Never write into storage underneath a running self-test.
+  if(selfTestRunning()) return;
+  try{
+    const d=snap.exists()?snap.data():null;
+    const saved=syncState()[part]||{rev:0,hash:''};
+    const cloudRev=(d&&typeof d.rev==='number')?d.rev:0;
+    const cloudVal=d?d.payload:undefined;
+
+    // Nothing in the cloud yet for this part → this device seeds it.
+    if(!d||cloudVal===undefined||cloudVal===null){
+      if(user) dirty.add(part), schedulePush();
+      return;
+    }
+    // Our own echo, already incorporated.
+    if(cloudRev===saved.rev && d.device===deviceId()) return;
+
+    const localVal=lsGet(meta.lsKey, emptyFor(meta.kind));
+    const cloudNewer=cloudRev>saved.rev;
+    const r=mergePart(meta.kind, localVal, cloudVal, cloudNewer);
+
+    const mergedS=stable(r.value);
+    const localChanged = mergedS!==stable(localVal);
+    const cloudStale   = mergedS!==stable(cloudVal);
+
+    if(localChanged){
+      applying=true;
+      const ok=lsSet(meta.lsKey, r.value);
+      applying=false;
+      if(!ok){ lastErr={code:'storage-full'}; status('error');
+        toast('This device\'s storage is full, so the cloud copy could not be saved here. Nothing was lost in the cloud.','err',9000);
+        return; }
+      counters.pulled+=r.gained;
+      counters.differed+=r.differed;
+      refreshApp(part);
+      if(r.gained) toast('☁️ '+r.gained+' new '+meta.label.toLowerCase()+' arrived from your other device','ok',4500);
+    }
+    setSyncState(part, cloudRev, hash(mergedS));
+    if(cloudStale){ dirty.add(part); schedulePush(); }
+    else { lsSet(LASTSYNC_K, Date.now()); status('synced'); }
+    renderPanel();
+  }catch(e){ log('pull failed',part,e); lastErr=e; status('error'); renderPanel(); }
+}
+
+function refreshApp(part){
+  // The work-record side has safe global entry points.
+  if(part==='data'){
+    try{ if(typeof window.safeLoadDB==='function') window.safeLoadDB(); }catch(e){ log('reload',e); }
+    try{ if(typeof window.updateSidebar==='function') window.updateSidebar(); }catch(e){}
+    try{ if(typeof window.updBadges==='function') window.updBadges(); }catch(e){}
+    try{ if(typeof window.refreshCurPage==='function') window.refreshCurPage(); }catch(e){ log('redraw',e); }
+    return;
+  }
+  // Files & cases live in their own module, which re-reads storage on render.
+  // Only redraw it when the person is actually looking at one of its pages,
+  // so a sync never yanks them out of whatever they are reading.
+  try{
+    const G=window.GX_SUBJ;
+    if(!G||typeof G.render!=='function'||!G.PGT) return;
+    const act=document.querySelector('.page.active');
+    const pg=act?String(act.id||'').replace(/^page-/,''):'';
+    if(!pg) return;
+    const tab=Object.keys(G.PGT).filter(t=>G.PGT[t]===pg)[0];
+    if(tab) G.render(tab);
+  }catch(e){ log('matters redraw',e); }
+}
+
+/* ───────────────────────── push ───────────────────────── */
+function schedulePush(){
+  if(!user||!ready||selfTestRunning()) return;
+  if(pushTimer) clearTimeout(pushTimer);
+  pushTimer=setTimeout(pushNow,1500);
+}
+async function pushNow(){
+  if(!user||!ready||!dirty.size) return;
+  if(selfTestRunning()){ pushTimer=setTimeout(pushNow,2000); return; }
+  const parts=[...dirty]; dirty.clear();
+  status('syncing');
+  for(const part of parts){
+    const meta=PARTS[part]; if(!meta) continue;
+    try{
+      const val=lsGet(meta.lsKey, emptyFor(meta.kind));
+      const s=stable(val);
+      if(s.length>DOC_LIMIT){
+        lastErr={code:'too-large'}; status('error');
+        toast(meta.label+' is too big for one cloud document ('+Math.round(s.length/1024)+' KB). It was NOT uploaded; this device keeps everything.','err',10000);
+        renderPanel(); continue;
+      }
+      const saved=syncState()[part]||{rev:0,hash:''};
+      const rev=saved.rev+1;
+      await setDoc(partRef(part),{ payload:val, rev:rev, device:deviceId(),
+                                   updatedAt:new Date().toISOString(), schema:1 });
+      setSyncState(part, rev, hash(s));
+      counters.pushed++;
+      lastErr=null;
+    }catch(e){
+      log('push failed',part,e); lastErr=e; dirty.add(part); status('error'); renderPanel(); return;
+    }
+  }
+  lsSet(LASTSYNC_K,Date.now());
+  status('synced'); renderPanel();
+}
+
+/* Pruning: make the cloud match this device exactly, deletions included. */
+async function replaceCloud(){
+  if(!user){ toast('Sign in first','err'); return; }
+  const n=Object.keys(PARTS).map(p=>p).join(', ');
+  const go=await (typeof window.confirm2==='function'
+    ? window.confirm2('The cloud copy will be replaced with exactly what is on THIS device, including any deletions. Records that exist only in the cloud will be gone. Download a backup first if unsure.','Replace the cloud copy?','☁️','Replace cloud','btn-err')
+    : Promise.resolve(window.confirm('Replace the cloud copy with this device?')));
+  if(!go) return;
+  for(const part of Object.keys(PARTS)){
+    const meta=PARTS[part];
+    try{
+      const val=lsGet(meta.lsKey, emptyFor(meta.kind));
+      const saved=syncState()[part]||{rev:0,hash:''};
+      const rev=saved.rev+1;
+      await setDoc(partRef(part),{ payload:val, rev:rev, device:deviceId(),
+                                   updatedAt:new Date().toISOString(), schema:1 });
+      setSyncState(part, rev, hash(stable(val)));
+    }catch(e){ lastErr=e; status('error'); renderPanel();
+      toast('Could not replace the cloud copy: '+explain(e).t,'err',8000); return; }
+  }
+  toast('Cloud copy now matches this device','ok',4500);
+  status('synced'); renderPanel();
+}
+
+/* ───────────────────────── auth ───────────────────────── */
+function attach(){
+  detach();
+  Object.keys(PARTS).forEach(part=>{
+    unsubs[part]=onSnapshot(partRef(part),
+      s=>onCloud(part,s),
+      e=>{ log('listen failed',part,e); lastErr=e; status('error'); renderPanel(); });
+  });
+}
+function detach(){ Object.values(unsubs).forEach(u=>{ try{u();}catch(e){} }); unsubs={}; }
+
+async function doSignIn(){
+  if(!ready){ toast('Cloud sync is still starting up — try again in a moment','info'); return; }
+  if(runningFromFile()){
+    lastErr={code:'auth/unauthorized-domain'}; renderPanel();
+    toast('This copy is running as a file. Open your live web address to sign in.','err',9000);
+    return;
+  }
+  const p=new GoogleAuthProvider();
+  p.setCustomParameters({prompt:'select_account'});
+  try{
+    status('syncing');
+    await signInWithPopup(auth,p);
+    lastErr=null;
+  }catch(e){
+    const c=String(e&&e.code||'');
+    // A blocked or unusable popup is the one case where the full-page flow is
+    // worth trying, even though it is the weaker option on a github.io address.
+    if(c==='auth/popup-blocked'||c==='auth/operation-not-supported-in-this-environment'){
+      try{ await signInWithRedirect(auth,p); return; }
+      catch(e2){ lastErr=e2; status('error'); renderPanel();
+        toast(explain(e2).t,'err',9000); return; }
+    }
+    if(c==='auth/cancelled-popup-request') return;
+    lastErr=e; status(c==='auth/popup-closed-by-user'?'local':'error'); renderPanel();
+    toast(explain(e).t,'err',9000);
+  }
+}
+async function doSignOut(){
+  const go=await (typeof window.confirm2==='function'
+    ? window.confirm2('Sign out of cloud sync on this device? Everything stays on this device and in the cloud — only syncing stops here.','Sign out?','☁️','Sign out','btn-err')
+    : Promise.resolve(true));
+  if(!go) return;
+  detach();
+  try{ await signOut(auth); }catch(e){ log('signout',e); }
+  toast('Signed out. This device is local only now.','info',4500);
+}
+
+/* ───────────────────────── test connection ───────────────────────── */
+async function runTest(){
+  const body=document.getElementById('csBody'); if(!body) return;
+  const steps=[];
+  const draw=()=>{ body.innerHTML=
+      '<div style="font-size:12.5px;margin-bottom:9px">Checking this device against your Firebase project.</div>'+
+      steps.map(s=>'<div class="cs-t"><div class="ic">'+s.ic+'</div><div class="tx"><b>'+esc2(s.t)+'</b>'+
+        (s.d?'<span>'+esc2(s.d)+'</span>':'')+
+        (s.fix?'<div class="cs-fix"><b>Fix:</b> '+esc2(s.fix)+'</div>':'')+
+        (s.rules?'<div class="cs-rules">'+esc2(s.rules)+'</div>':'')+
+      '</div></div>').join('');
+  };
+  const add=(ic,t,d,fix,rules)=>{ steps.push({ic,t,d,fix,rules}); draw(); };
+
+  // 1 · SDK
+  if(!ready){ add('❌','Firebase code did not load','The app could not fetch the Firebase library.',
+      'Check your internet connection and reload the page. If you are offline, the app still works — only sync is paused.'); return; }
+  add('✅','Firebase code loaded','Version 13.2.0 from Google\'s servers.');
+
+  // 2 · address
+  const host=location.hostname;
+  if(runningFromFile()){
+    add('❌','Running as a file, not a web address',
+        'The address bar shows file:// instead of https://. Sign-in needs a real web address.',
+        'Upload index.html to GitHub, then open https://'+(DEFAULT_HOST||'your-name.github.io/Workjournal/')+' and run this test there.');
+    return;
+  }
+  const localish=/^(localhost|127\.0\.0\.1|\[::1\])$/.test(host);
+  add(localish?'⚠️':'✅','Web address: '+host,
+      localish?'A local server. Sign-in works here once this address is added to Firebase, but your real address must be added too.'
+              :'This is the address that must appear in Firebase → Authentication → Settings → Authorized domains.');
+
+  // 3 · project
+  add('✅','Firebase project: '+cfg().projectId,'Region for Firestore should be asia-south1 (Mumbai).');
+
+  // 4 · sign-in
+  if(!user){ add('❌','Not signed in','Sign-in is what gives your records a private space of their own.',
+      'Press "Sign in with Google" at the bottom of this window, then run the test again.'); return; }
+  add('✅','Signed in as '+(user.email||user.uid),'Your private space is users/'+user.uid+' inside Firestore.');
+
+  // 5 · read
+  let readOk=false;
+  try{ await getDoc(partRef('data')); readOk=true; add('✅','Database read works','The rules let this account read its own space.'); }
+  catch(e){ const x=explain(e);
+    add('❌','Database read refused: '+x.t,'',x.f,x.f.indexOf('rules')>=0?RULES_SIGNEDIN:''); }
+
+  // 6 · write
+  if(readOk){
+    try{
+      const probe=doc(fs,'users',user.uid,'state','_probe');
+      await setDoc(probe,{probe:true,at:new Date().toISOString(),device:deviceId()});
+      try{ await deleteDoc(probe); }catch(e){}
+      add('✅','Database write works','A test record was written, then removed again. Your own data was not touched.');
+    }catch(e){ const x=explain(e);
+      add('❌','Database write refused: '+x.t,'',x.f,x.f.indexOf('rules')>=0?RULES_SIGNEDIN:''); }
+  }
+
+  // 7 · isolation
+  try{
+    await getDoc(doc(fs,'users','someone-elses-account','state','data'));
+    add('⚠️','Another account\'s space was readable',
+        'The rules are wider than they should be. Your data is reachable by anyone who signs in.',
+        'Paste the rules below into Firestore Database → Rules → Publish.',RULES_SIGNEDIN);
+  }catch(e){
+    if(String(e&&e.code||'').indexOf('permission-denied')>=0)
+      add('✅','Other accounts are blocked','The rules correctly refuse any space that is not yours.');
+    else add('⚠️','Could not check isolation','Reason: '+String(e&&e.code||e));
+  }
+
+  // 8 · size headroom
+  let big=[];
+  Object.keys(PARTS).forEach(p=>{
+    const n=stable(lsGet(PARTS[p].lsKey,emptyFor(PARTS[p].kind))).length;
+    if(n>DOC_LIMIT*0.7) big.push(PARTS[p].label+' '+Math.round(n/1024)+' KB');
+  });
+  add(big.length?'⚠️':'✅','Room in the cloud',
+      big.length?'Close to the single-document limit: '+big.join(', ')
+                :'All four parts are well inside the 1 MB per-document limit.');
+
+  // 9 · owner-only rules
+  add('ℹ️','Lock the database to your account only',
+      'Your account ID is below. Paste it into the owner-only rules and publish them — after that, no other Google account can use this database at all, even if someone finds the address.',
+      '', RULES_OWNER.replace('PASTE_YOUR_UID_HERE', user.uid));
+
+  const okAll=!steps.some(s=>s.ic==='❌');
+  body.insertAdjacentHTML('afterbegin',
+    '<div class="cs-box '+(okAll?'cs-ok':'cs-err')+'" style="margin:0 0 11px"><b>'+
+    (okAll?'Sync is working on this device.':'Sync is not working yet — the ❌ lines below say exactly what to change.')+
+    '</b></div>');
+}
+
+/* ───────────────────────── rules text ───────────────────────── */
+const RULES_SIGNEDIN =
+`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // A signed-in account may touch only its own space.
+    // Everything else is refused, because Firestore denies
+    // anything no rule allows.
+    match /users/{uid}/state/{docId} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == uid;
+    }
+  }
+}`;
+
+const RULES_OWNER =
+`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Only this one Google account can read or write anything.
+    match /users/{uid}/state/{docId} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == uid
+                         && uid == 'PASTE_YOUR_UID_HERE';
+    }
+  }
+}`;
+
+/* ───────────────────────── panel ───────────────────────── */
+function esc2(s){ return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function whenTxt(){
+  const t=lsGet(LASTSYNC_K,0); if(!t) return 'not yet';
+  const d=Math.floor((Date.now()-t)/1000);
+  if(d<60) return 'just now';
+  if(d<3600) return Math.floor(d/60)+' min ago';
+  try{ return new Date(t).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }
+  catch(e){ return 'earlier'; }
+}
+
+function renderPanel(){
+  // Settings page card
+  const pill=document.getElementById('fbPill'), sb=document.getElementById('fbSettingBody');
+  if(pill) pill.innerHTML = user
+    ? '<span class="badge bt" style="margin-left:7px">Synced</span>'
+    : '<span class="badge bw" style="margin-left:7px">Local only</span>';
+  if(sb) sb.innerHTML=
+    '<div class="set-row"><div><div class="set-lbl">'+(user?'Signed in as '+esc2(user.email||user.uid):'Cloud sync')+'</div>'+
+    '<div class="set-sub">'+(user?'Last sync '+whenTxt():'Keep your records on your own private Firebase account')+'</div></div>'+
+    '<button class="btn btn-fb btn-sm" onclick="WJCloud.open()">'+(user?'Manage':'☁️ Set up')+'</button></div>';
+
+  // Modal body (skip while a test is on screen)
+  const body=document.getElementById('csBody');
+  if(!body||body.dataset.mode==='test') return;
+  const ab=document.getElementById('csAuthBtn');
+  if(ab) ab.textContent = user?'Sign out':'Sign in with Google';
+
+  let h='';
+  if(!ready){
+    h+='<div class="cs-box cs-warn"><b>Still loading the Firebase code.</b><br>If this stays here, you are probably offline. The app works fine without it — your records are on this device.</div>';
+  }
+  if(user){
+    h+='<div class="cs-box cs-ok"><b>Sync is on for this device.</b><br>Records you add here appear on your other devices, and theirs appear here.</div>';
+    h+='<div class="cs-row"><div class="l"><b>Signed in</b><span>'+esc2(user.email||'')+'</span></div></div>';
+    h+='<div class="cs-row"><div class="l"><b>Your account ID</b><span>Needed for the owner-only rules.</span>'+
+       '<span class="cs-uid">'+esc2(user.uid)+'</span></div></div>';
+    h+='<div class="cs-row"><div class="l"><b>Last sync</b><span>'+whenTxt()+'</span></div></div>';
+    h+='<div class="cs-row"><div class="l"><b>Arrived from other devices</b><span>Since this page opened</span></div><b>'+counters.pulled+'</b></div>';
+    h+='<div class="cs-row"><div class="l"><b>Sent to the cloud</b><span>Since this page opened</span></div><b>'+counters.pushed+'</b></div>';
+    if(counters.differed) h+='<div class="cs-box cs-warn"><b>'+counters.differed+
+      ' record(s) differed between this device and the cloud</b><br>The newer side was kept and nothing was deleted. If something looks wrong, use 💾 Backup to download a copy before making more changes.</div>';
+    h+='<div class="cs-row"><div class="l"><b>Deleting records</b>'+
+       '<span>A deletion on one device does not remove the record elsewhere — sync only ever adds, so nothing can be lost by accident. To make the cloud match this device exactly, use the button here.</span></div>'+
+       '<button class="btn btn-err btn-sm" onclick="WJCloud.replaceCloud()">Replace cloud</button></div>';
+  } else if(runningFromFile()){
+    h+='<div class="cs-box cs-warn"><b>This copy is running as a file on your computer.</b><br>'+
+       'The address bar shows file:// instead of https://, and Google sign-in cannot work that way — there is no web address for Firebase to trust.<br><br>'+
+       'Upload <b>index.html</b> to GitHub, then open <b>https://'+esc2(DEFAULT_HOST)+'</b> and sign in there. '+
+       'Anything you have already saved into this file copy stays in it; use 💾 Backup to carry it across.</div>';
+  } else {
+    h+='<div class="cs-box cs-info"><b>This device is local only.</b><br>Your records are saved here and nowhere else. Sign in with the same Google account on each device to keep them together.</div>';
+    h+='<div class="cs-row"><div class="l"><b>What signing in does</b><span>Creates a private space in your own Firebase project that only your Google account can open. Anthropic and I have no access to it.</span></div></div>';
+  }
+  if(lastErr){
+    const x=explain(lastErr);
+    h+='<div class="cs-box cs-err"><b>'+esc2(x.t)+'</b>'+(x.f?'<br><b>Fix:</b> '+esc2(x.f):'')+'</div>';
+  }
+  h+='<div style="margin-top:12px;font-size:11.5px;color:var(--txm);line-height:1.6">'+
+     'Your Abay AI key is never uploaded. Sync carries only work records, files and cases, courts, and holiday settings.</div>';
+  body.innerHTML=h;
+}
+
+/* ───────────────────────── wiring ───────────────────────── */
+function hookLocalWrites(){
+  const raw=localStorage.setItem.bind(localStorage);
+  const watched={}; Object.keys(PARTS).forEach(p=>watched[PARTS[p].lsKey]=p);
+  localStorage.setItem=function(k,v){
+    raw(k,v);
+    if(applying) return;
+    const part=watched[String(k)];
+    if(part && user && ready && !selfTestRunning()){ dirty.add(part); schedulePush(); }
+  };
+  // Replace the dead Realtime Database hook the old build left behind.
+  window.fbSave=function(){ if(user&&ready&&!applying&&!selfTestRunning()){ dirty.add('data'); schedulePush(); } };
+}
+
+const WJCloud={
+  open(){ const b=document.getElementById('csBody'); if(b) delete b.dataset.mode;
+          renderPanel(); if(typeof window.om==='function') window.om('mCloud'); },
+  toggleAuth(){ user?doSignOut():doSignIn(); },
+  async test(){
+    const b=document.getElementById('csBody'); if(!b) return;
+    const btn=document.getElementById('csTestBtn');
+    b.dataset.mode='test';
+    if(typeof window.om==='function') window.om('mCloud');
+    if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
+    try{ await runTest(); }
+    catch(e){ b.innerHTML='<div class="cs-box cs-err"><b>The check itself failed.</b><br>'+esc2(String(e&&e.message||e))+'</div>'; }
+    if(btn){ btn.disabled=false; btn.textContent='← Back'; btn.onclick=()=>WJCloud.back(); }
+  },
+  back(){
+    const b=document.getElementById('csBody'); if(b) delete b.dataset.mode;
+    const btn=document.getElementById('csTestBtn');
+    if(btn){ btn.textContent='🔍 Test connection'; btn.onclick=()=>WJCloud.test(); }
+    renderPanel();
+  },
+  replaceCloud, status(){ return {ready,signedIn:!!user,uid:user?user.uid:null,
+    lastSync:lsGet(LASTSYNC_K,0),counters:{...counters},error:lastErr?explain(lastErr):null}; },
+  _parts:PARTS, _merge:mergePart, _never:NEVER_SYNC
+};
+window.WJCloud=WJCloud;
+
+// Take over the two entry points the old build pointed at a dead-end message.
+window.openFbSetup=function(){ WJCloud.open(); };
+window.renderFbSetting=function(){ renderPanel(); };
+
+async function start(){
+  if(started) return; started=true;
+  hookLocalWrites();
+  renderPanel();
+  try{
+    app=initializeApp(cfg());
+    auth=getAuth(app);
+    fs=getFirestore(app);
+    try{ await setPersistence(auth,browserLocalPersistence); }catch(e){ log('persistence',e); }
+    ready=true; lastErr=null;
+    getRedirectResult(auth).catch(e=>{ const c=String(e&&e.code||'');
+      if(c&&c!=='auth/no-auth-event'){ lastErr=e; renderPanel(); } });
+    onAuthStateChanged(auth,u=>{
+      user=u||null;
+      if(user){ counters={pulled:0,pushed:0,differed:0}; status('syncing'); attach();
+                Object.keys(PARTS).forEach(p=>dirty.add(p)); schedulePush(); }
+      else { detach(); status('local'); }
+      renderPanel();
+    });
+  }catch(e){
+    ready=false; lastErr=e; status('local'); renderPanel();
+    log('init failed',e);
+  }
+  renderPanel();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start);
+else start();
+</script>
+
 </body>
 </html>
